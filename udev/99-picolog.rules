@@ -1,0 +1,24 @@
+# picolog (Raspberry Pi Pico 2 UART flight recorder)
+#
+# Install:
+#   sudo cp udev/99-picolog.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload && sudo udevadm trigger
+#
+# If you built the firmware with a different PICOLOG_USB_VID/PID, change
+# 1209/0001 below accordingly.
+#
+# Only positive ATTRS matches are used: a negative ATTRS{}!= match can be
+# satisfied by any parent (e.g. the USB root hub) and would misfire.
+
+# Keep ModemManager from probing the ports with AT commands. Applied to the
+# USB device, its interfaces and the tty nodes.
+ACTION=="add|change", SUBSYSTEMS=="usb", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="0001", ENV{ID_MM_DEVICE_IGNORE}="1"
+
+# Stable names by CDC interface number:
+#   interface 00 -> /dev/picolog-live
+#   interface 02 -> /dev/picolog-replay
+# plus per-device names /dev/picolog/<serial>-{live,replay} for setups with
+# more than one picolog.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="0001", IMPORT{builtin}="usb_id"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="0001", ENV{ID_USB_INTERFACE_NUM}=="00", SYMLINK+="picolog-live", SYMLINK+="picolog/$env{ID_SERIAL_SHORT}-live"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="0001", ENV{ID_USB_INTERFACE_NUM}=="02", SYMLINK+="picolog-replay", SYMLINK+="picolog/$env{ID_SERIAL_SHORT}-replay"

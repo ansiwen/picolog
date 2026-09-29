@@ -4,3 +4,5 @@ test/unit/test_*
 !test/unit/test_*.c
 __pycache__/
 *.pyc
+test/sim/picolog_sim
+.pytest_cache/
