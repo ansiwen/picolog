@@ -5,6 +5,17 @@
 //                   marker, then continue live from exactly where the
 //                   replay ended (no gap, no duplicate).
 //
+// After a DTR rising edge the port waits USB_PORT_OPEN_DELAY_US before
+// sending. Many host programs, e.g. pyserial, flush the tty input buffer
+// right after open(), which would otherwise discard the replay header and
+// the start of the history. The live cursor is set at the DTR edge, so live
+// data from the delay period is still delivered. The replay snapshot
+// (oldest offset, end offset, header) is taken only when sending starts, and
+// the header plus the first history bytes are queued in the same call. With
+// a full ring and data flowing, taking it earlier would make the oldest
+// bytes get overwritten before they are sent, i.e. every replay under load
+// would begin with a "dropped" marker.
+//
 // A reader that falls behind the oldest valid byte is moved forward and gets
 // a "[picolog: N bytes dropped]" marker. Bytes from the host are discarded.
 //
@@ -19,6 +30,8 @@
 
 #include "history.h"
 
+#define USB_PORT_OPEN_DELAY_US 100000u
+
 typedef struct {
     bool (*connected)(uint8_t itf);  // mounted and DTR asserted
     uint32_t (*write_available)(uint8_t itf);
@@ -30,6 +43,7 @@ typedef struct {
 
 typedef enum {
     USB_PORT_CLOSED,
+    USB_PORT_REPLAY_PENDING,  // DTR seen, waiting for the open delay
     USB_PORT_REPLAY,
     USB_PORT_LIVE,
 } usb_port_state_t;
@@ -40,6 +54,7 @@ typedef struct {
     usb_port_state_t state;
     uint64_t cursor;
     uint64_t replay_end;
+    uint64_t opened_at_us;
     uint16_t msg_len;
     uint16_t msg_pos;
     char msg[160];  // pending out-of-band text (header, markers)

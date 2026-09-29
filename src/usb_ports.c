@@ -27,11 +27,16 @@ __attribute__((format(printf, 2, 3))) static void set_msg(usb_port_t *p, const c
 
 static void open_port(usb_port_t *p, const history_t *h, uint64_t uptime_us) {
     p->msg_len = p->msg_pos = 0;
-    if (!p->is_replay) {
+    p->opened_at_us = uptime_us;
+    if (p->is_replay) {
+        p->state = USB_PORT_REPLAY_PENDING;
+    } else {
         p->cursor = history_head(h);
         p->state = USB_PORT_LIVE;
-        return;
     }
+}
+
+static void start_replay(usb_port_t *p, const history_t *h, uint64_t uptime_us) {
     p->cursor = history_oldest(h);
     p->replay_end = history_head(h);
     p->state = USB_PORT_REPLAY;
@@ -53,6 +58,12 @@ void usb_port_task(usb_port_t *p, const usb_port_io_t *io, const history_t *h, u
     if (p->state == USB_PORT_CLOSED) {
         io->clear_tx(p->itf);
         open_port(p, h, uptime_us);
+    }
+    if (uptime_us - p->opened_at_us < USB_PORT_OPEN_DELAY_US) {
+        return;
+    }
+    if (p->state == USB_PORT_REPLAY_PENDING) {
+        start_replay(p, h, uptime_us);
     }
 
     bool wrote = false;

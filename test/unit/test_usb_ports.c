@@ -54,13 +54,19 @@ static void f_discard_rx(uint8_t itf) { fake[itf].discard_rx_calls++; }
 
 static const usb_port_io_t io = {f_connected, f_write_available, f_write, f_flush, f_clear_tx, f_discard_rx};
 
+// Every task call advances time by the open delay, so a port opened in one
+// call starts sending in the next.
+static uint64_t fake_now;
+
 static void task(usb_port_t *p, const history_t *h) {
     fake[p->itf].avail_left = fake[p->itf].avail_per_task;
-    usb_port_task(p, &io, h, 90061000000ull);  // 1d 01:01:01
+    usb_port_task(p, &io, h, fake_now);
+    fake_now += USB_PORT_OPEN_DELAY_US;
 }
 
 static void reset_fakes(void) {
     memset(fake, 0, sizeof(fake));
+    fake_now = 90061000000ull;  // 1d 01:01:01
     fake[0].avail_per_task = fake[1].avail_per_task = 1u << 30;
 }
 
@@ -162,16 +168,21 @@ static void test_replay_then_live_no_gap_no_dup(void) {
     fresh(&h);
     line_no = 0;
     append_lines(&h, 400);  // ~5 KB > SIZE: ring has wrapped
-    uint64_t oldest = history_oldest(&h);
-    CHECK(oldest > 0);
+    CHECK(history_oldest(&h) > 0);
+    uint64_t oldest = 0;
 
     usb_port_t p;
     usb_port_init(&p, 1, true);
     fake[1].connected = true;
     fake[1].avail_per_task = 97;  // slow-ish reader, odd chunking
 
-    // Keep producing while replaying, but slower than the reader.
+    // Keep producing while replaying, but slower than the reader. Data also
+    // arrives during the open delay (i == 0); the replay snapshot is taken
+    // when sending starts (i == 1), so that must not cause a drop.
     for (int i = 0; i < 2000; i++) {
+        if (i == 1) {
+            oldest = history_oldest(&h);
+        }
         task(&p, &h);
         if (i % 3 == 0) {
             append_lines(&h, 1);
@@ -233,6 +244,8 @@ static void test_replay_every_reconnect(void) {
         fake[1].out[0] = 0;
         fake[1].connected = true;
         task(&p, &h);
+        CHECK(fake[1].out_len == 0);  // open delay
+        task(&p, &h);
         CHECK(p.state == USB_PORT_LIVE);
         CHECK(cut(&fake[1], "=== picolog replay: 3 bytes") == 0);
         CHECK(cut(&fake[1], "\r\n=== picolog replay end, live follows ===\r\n") > 0);
@@ -250,6 +263,7 @@ static void test_replay_empty_history(void) {
     usb_port_t p;
     usb_port_init(&p, 1, true);
     fake[1].connected = true;
+    task(&p, &h);
     task(&p, &h);
     CHECK(p.state == USB_PORT_LIVE);
     CHECK(cut(&fake[1], "=== picolog replay: 0 bytes") == 0);
@@ -299,7 +313,9 @@ static void test_drop_during_replay(void) {
     usb_port_init(&p, 1, true);
     fake[1].connected = true;
     fake[1].avail_per_task = 50;
+    task(&p, &h);  // open
     task(&p, &h);  // header partially sent
+    CHECK(fake[1].out_len == 50);
     // Flood: more than the whole ring arrives while the reader is slow.
     append_lines(&h, 800);
     fake[1].avail_per_task = 1u << 30;
@@ -324,6 +340,8 @@ static void test_ports_independent(void) {
     fake[0].connected = fake[1].connected = true;
     task(&live, &h);
     task(&replay, &h);
+    task(&live, &h);    // past the open delay
+    task(&replay, &h);  // replay of "hist" sent
     history_append(&h, "NEW", 3);
     task(&live, &h);
     task(&replay, &h);
