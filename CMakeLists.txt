@@ -22,6 +22,8 @@ set(PICOLOG_SOURCES
     src/main.c
     src/capture.c
     src/history.c
+    src/usb_ports.c
+    src/usb_descriptors.c
 )
 
 add_executable(picolog ${PICOLOG_SOURCES})
@@ -48,6 +50,8 @@ target_link_libraries(picolog PRIVATE
     hardware_dma
     hardware_uart
     hardware_irq
+    pico_unique_id
+    tinyusb_device
 )
 
 # No stdio at all: USB CDC is ours (pico_stdio_usb would claim it) and
