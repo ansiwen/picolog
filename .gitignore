@@ -1,0 +1,6 @@
+build/
+build-*/
+test/unit/test_*
+!test/unit/test_*.c
+__pycache__/
+*.pyc
