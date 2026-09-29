@@ -8,12 +8,14 @@
 #include "usb_ports.h"
 
 #include "hardware/structs/powman.h"
+#include "hardware/structs/scb.h"
 #include "hardware/structs/watchdog.h"
 #include "hardware/watchdog.h"
 #include "pico/stdlib.h"
 #include "tusb.h"
 
 #include <stdio.h>
+#include <string.h>
 
 #define HISTORY_SIZE (256u * 1024u)
 
@@ -154,6 +156,45 @@ static void describe_reset(char *out, size_t n) {
     }
 }
 
+#if PICOLOG_TEST_HOOKS
+// Test-only commands on the live port (build with -DPICOLOG_TEST_HOOKS=ON),
+// used by test/hw to exercise reset persistence without a debug probe:
+//   picolog:reboot    watchdog_reboot()           -> "watchdog-forced"
+//   picolog:hang      stop feeding the watchdog   -> "watchdog"
+//   picolog:sysreset  Arm AIRCR.SYSRESETREQ       -> "soft"
+// Must run before usb_port_task(), which discards host input.
+static void test_hooks_poll(void) {
+    static char line[24];
+    static size_t len;
+    while (tud_cdc_n_available(0)) {
+        char c;
+        if (tud_cdc_n_read(0, &c, 1) != 1) {
+            break;
+        }
+        if (c != '\r' && c != '\n') {
+            if (len < sizeof(line) - 1) {
+                line[len++] = c;
+            }
+            continue;
+        }
+        line[len] = 0;
+        len = 0;
+        if (strcmp(line, "picolog:reboot") == 0) {
+            watchdog_reboot(0, 0, 0);
+            for (;;) {
+            }
+        } else if (strcmp(line, "picolog:hang") == 0) {
+            for (;;) {
+            }
+        } else if (strcmp(line, "picolog:sysreset") == 0) {
+            scb_hw->aircr = (0x05fau << M33_AIRCR_VECTKEY_LSB) | M33_AIRCR_SYSRESETREQ_BITS;
+            for (;;) {
+            }
+        }
+    }
+}
+#endif
+
 int main(void) {
     char reason[64];
     describe_reset(reason, sizeof(reason));
@@ -174,6 +215,9 @@ int main(void) {
     for (;;) {
         watchdog_update();
         tud_task();
+#if PICOLOG_TEST_HOOKS
+        test_hooks_poll();
+#endif
 
         // Data first, then markers, so a marker lands after the bytes that
         // were received before the event was noticed.
