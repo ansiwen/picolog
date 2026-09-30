@@ -1,0 +1,8 @@
+build/
+build-*/
+test/unit/test_history
+test/unit/test_usb_ports
+test/sim/picolog_sim
+__pycache__/
+*.pyc
+.pytest_cache/
