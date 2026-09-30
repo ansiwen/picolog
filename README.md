@@ -60,7 +60,7 @@ This produces `build/picolog.uf2` (board `pico2`, platform `rp2350-arm-s`). Opti
 | Option | Default | Meaning |
 |---|---|---|
 | `PICOLOG_UART_BAUD` | `115200` | baud rate of the captured UART |
-| `PICOLOG_UART_RX_PIN` | `1` | GPIO used as UART0 RX |
+| `PICOLOG_UART_RX_PIN` | `1` | GPIO used as UART0 RX: `1`, `3`, `13`, `15`, `17` or `19` (anything else is rejected) |
 | `PICOLOG_UART_DATA_BITS` | `8` | 5-8 |
 | `PICOLOG_UART_STOP_BITS` | `1` | 1 or 2 |
 | `PICOLOG_UART_PARITY` | `NONE` | `NONE`, `EVEN` or `ODD` |
@@ -92,8 +92,20 @@ sudo udevadm control --reload
 
 The rule tells ModemManager to leave the device alone (`ID_MM_DEVICE_IGNORE=1`) and creates stable
 names by interface number: `/dev/picolog-live`, `/dev/picolog-replay`, plus
-`/dev/picolog/<serial>-live` and `-replay` if you have several recorders. Without the rule
-everything still works using the `ttyACM` numbers, which depend on plug order.
+`/dev/picolog/<serial>-live` and `-replay` if you have several recorders (the serial number is
+the flash unique ID). The firmware discards anything the host sends, so ModemManager's AT probes
+cannot corrupt anything, but each probe opens the ports and so wastes a replay.
+
+Without the rule everything still works using the `ttyACM` numbers, which depend on plug order.
+The lower number is normally the live port; to be sure, check the interface number (`00` = live,
+`02` = replay):
+
+```sh
+udevadm info /dev/ttyACM0 | grep ID_USB_INTERFACE_NUM
+```
+
+On Windows and macOS the two ports appear as two COM ports or `/dev/cu.usbmodem*` devices; the
+interface names are "picolog live" and "picolog replay".
 
 ## Usage
 
@@ -101,16 +113,17 @@ The terminal program **must assert DTR** (all common ones do). That is how the f
 session has started; without DTR nothing is sent.
 
 ```sh
-# live console
+# live console (quit with C-a C-x)
 picocom /dev/picolog-live
 
 # retrieve the history, keep following live output, save everything to a file
 picocom --logfile crash.log /dev/picolog-replay
 
 # other tools
-minicom -D /dev/picolog-replay
-screen /dev/picolog-replay 115200
-# PuTTY: Serial, /dev/picolog-replay (or COMx on Windows)
+minicom -D /dev/picolog-replay        # quit with C-a x
+screen /dev/picolog-replay 115200     # quit with C-a k
+# PuTTY: Serial, /dev/picolog-replay (or COMx on Windows);
+# log with Session -> Logging -> All session output
 ```
 
 The baud rate you give the terminal program is irrelevant (it is USB).
@@ -121,6 +134,9 @@ A serial port has no end-of-file, so scripts need a timeout:
 stty -F /dev/picolog-replay raw -echo
 timeout 5 cat /dev/picolog-replay > crash.log
 ```
+
+At USB full speed the 256 KiB replay typically takes well under a second; the rest of the timeout
+just captures live data.
 
 Example replay output:
 
@@ -169,8 +185,9 @@ target TX -> UART0 RX FIFO --DMA (ring mode)--> stage-1 ring (32 KiB, aligned)
 ```
 
 - **Stage 1:** one DMA channel moves every received byte from `UARTDR` into a 32 KiB ring, with
-  no CPU per byte and no interrupts for data. The main loop (single core, never blocks) copies
-  what arrived into the history.
+  no CPU per byte and no interrupts for data. 32 KiB is the largest ring the DMA can wrap and gives
+  about 2.8 s of slack at 115200 baud. The main loop (single core, never blocks) copies what
+  arrived into the history.
 - **History:** 256 KiB ring with a monotonic 64-bit write offset. Each port has a cursor (an
   absolute offset). A cursor older than the oldest valid byte means data was dropped.
 - **Line errors:** DMA reads of `UARTDR` discard the error bits, so only the UART's error
@@ -233,7 +250,7 @@ TinyUSB glue and the USB unplug/suspend behaviour can only be exercised on a rea
 the hardware integration tests there before relying on it.
 
 ```sh
-make -C test/unit check        # C unit tests (host, ASan + UBSan)
+make -C test/unit              # build and run the C unit tests (host, ASan + UBSan)
 ```
 
 - `test_history`: ring semantics, wraparound, 64-bit offsets across 2^32 and 2^40, `appendf`.
@@ -269,12 +286,46 @@ for gaps, duplicates and corruption. `picolog_gen.py` is also a CLI (`--count`, 
 | `PICOLOG_UNPLUG_CMD`, `PICOLOG_PLUG_CMD` | commands to cut/restore USB, e.g. via `uhubctl` |
 | `PICOLOG_INTERACTIVE` | `1`: ask a human to unplug/replug (run `pytest -s`) |
 
-The "data sent while USB is unplugged is in the replay" test only runs when unplug commands (or
-`PICOLOG_INTERACTIVE`) are given.
+Setup: wire the adapter's TX to GP1 and GND to GND (3.3 V levels), plug both into the test
+machine, power the Pico from its own supply as in production (see [Power](#power)) and install
+the udev rule. Then:
 
-**ModemManager (manual check).** With and without the udev rule, confirm there is no corruption and
-replay still works. With the rule, `udevadm info /dev/picolog-live | grep ID_MM_DEVICE_IGNORE`
-should show `1` and `mmcli -L` should not list the device.
+```sh
+cd test/hw
+PICOLOG_ADAPTER=/dev/ttyUSB0 pytest -v
+```
+
+| Test | Checks |
+|---|---|
+| `test_live_sees_every_line` | every line arrives on the live port, in order, without gaps |
+| `test_live_stress_high_baud` | the same for 20000 lines at 1 Mbaud (only with `PICOLOG_BAUD=1000000` and a matching firmware build) |
+| `test_replay_returns_full_history` | the replay holds exactly the last `PICOLOG_HISTORY` bytes, in order, with header and end marker |
+| `test_replay_twice_identical` | reading does not consume: two replays in a row are identical |
+| `test_replay_live_seam` | no gap or duplicate between the end of the replay and the live data that follows, while data keeps arriving |
+| `test_both_ports_at_once` | both ports open at the same time each get a correct stream |
+| `test_slow_live_reader_gets_dropped_marker` | a live reader that stops reading gets a `dropped` marker, and the firmware keeps serving the replay port meanwhile |
+| `test_break_is_recorded` | a BREAK from the adapter shows up as a marker, live and in the replay (skipped in the simulator) |
+| `test_data_sent_while_usb_unplugged_is_in_replay` | lines sent while the Pico's USB is unplugged are in the replay after replugging, without gaps |
+
+The unplug test only runs when unplug commands (or `PICOLOG_INTERACTIVE`) are given. With a hub
+that supports per-port power switching, for example:
+
+```sh
+PICOLOG_UNPLUG_CMD="uhubctl -l 1-1 -p 2 -a off" PICOLOG_PLUG_CMD="uhubctl -l 1-1 -p 2 -a on" \
+PICOLOG_ADAPTER=/dev/ttyUSB0 pytest -v -k unplugged
+```
+
+(`-l`/`-p` select the hub and port; run `uhubctl` without arguments to list them.)
+
+**ModemManager (manual check).**
+
+1. Without the udev rule, with ModemManager running: plug in the Pico, run
+   `python3 test/hw/picolog_gen.py /dev/ttyUSB0 --forever` and watch
+   `journalctl -fu ModemManager` while it probes. Afterwards `picocom /dev/ttyACM1` must still give
+   a correct replay: AT probes are discarded and cannot corrupt anything.
+2. With the rule installed and the Pico replugged:
+   `udevadm info /dev/picolog-replay | grep ID_MM_DEVICE_IGNORE` shows `1`, and `mmcli -L` does not
+   list the device.
 
 ## Project layout
 
