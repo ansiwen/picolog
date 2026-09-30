@@ -6,3 +6,4 @@ test/sim/picolog_sim
 __pycache__/
 *.pyc
 .pytest_cache/
+test/unit/test_capture
