@@ -27,6 +27,8 @@ set(PICOLOG_SOURCES
     src/main.c
     src/capture.c
     src/history.c
+    src/usb_ports.c
+    src/usb_descriptors.c
 )
 
 add_executable(picolog ${PICOLOG_SOURCES})
@@ -52,6 +54,8 @@ target_link_libraries(picolog PRIVATE
     hardware_dma
     hardware_uart
     hardware_irq
+    pico_unique_id
+    tinyusb_device
 )
 
 # UART0 is the capture input and USB CDC belongs to us: no stdio at all.
