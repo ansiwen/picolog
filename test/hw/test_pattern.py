@@ -80,10 +80,9 @@ def test_unexplained_gap_lenient_still_error():
 def test_split_replay():
     hist = p.lines(0, 10)[30:]
     live = p.lines(10, 5)
-    header = b"=== picolog replay: %d bytes, uptime 0d 00:01:02, resets since power-on 3 ===\r\n" % len(hist)
+    header = b"=== picolog replay: %d bytes, uptime 0d 00:01:02 ===\r\n" % len(hist)
     r = p.split_replay(header + hist + p.END_MARKER + live)
     assert r.size == len(hist)
-    assert r.resets == 3
     assert r.history == hist
     assert r.live == live
     # Seam check: removing the end marker yields a seamless stream.

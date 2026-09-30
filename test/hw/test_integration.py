@@ -11,8 +11,6 @@ Environment:
   PICOLOG_REPLAY       replay port (default /dev/picolog-replay)
   PICOLOG_BAUD         must match the firmware's PICOLOG_UART_BAUD (default 115200)
   PICOLOG_HISTORY      history size in bytes (default 262144)
-  PICOLOG_TEST_HOOKS=1 firmware was built with -DPICOLOG_TEST_HOOKS=ON: run reset tests
-  PICOLOG_INTERACTIVE=1 run tests that need a human (power cycle); use `pytest -s`
   PICOLOG_SIM=1        running against test/sim/picolog_sim (skips BREAK, which it cannot model)
 
 Run:  cd test/hw && PICOLOG_ADAPTER=/dev/ttyUSB0 pytest -v test_integration.py
@@ -36,8 +34,6 @@ LIVE = os.environ.get("PICOLOG_LIVE", "/dev/picolog-live")
 REPLAY = os.environ.get("PICOLOG_REPLAY", "/dev/picolog-replay")
 BAUD = int(os.environ.get("PICOLOG_BAUD", "115200"))
 HISTORY = int(os.environ.get("PICOLOG_HISTORY", str(256 * 1024)))
-HOOKS = os.environ.get("PICOLOG_TEST_HOOKS") == "1"
-INTERACTIVE = os.environ.get("PICOLOG_INTERACTIVE") == "1"
 SIM = os.environ.get("PICOLOG_SIM") == "1"
 
 BYTES_PER_SEC = BAUD / 10  # 8N1
@@ -50,25 +46,6 @@ pytestmark = pytest.mark.skipif(not ADAPTER, reason="PICOLOG_ADAPTER not set (no
 
 def secs_for(nbytes: int) -> float:
     return nbytes / BYTES_PER_SEC
-
-
-def wait_for_device(path: str, timeout: float = 15.0) -> None:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        try:
-            with serial.Serial(path, timeout=0):
-                return
-        except (serial.SerialException, OSError):
-            time.sleep(0.2)
-    raise TimeoutError(f"{path} did not appear")
-
-
-def wait_for_reenumeration(path: str) -> None:
-    deadline = time.monotonic() + 10
-    while os.path.exists(path) and time.monotonic() < deadline:
-        time.sleep(0.05)
-    wait_for_device(path)
-    time.sleep(0.5)
 
 
 class Reader:
@@ -168,8 +145,7 @@ def test_live_sees_every_line(gen):
 def test_replay_full_history(gen):
     send_recorded(gen, lines_for(int(HISTORY * 1.25)))
     rp = read_replay()
-    # Full ring; up to HISTORY_COMMIT_CHUNK (512) bytes less right after a reset.
-    assert HISTORY - 512 <= rp.size <= HISTORY
+    assert rp.size == HISTORY
     assert len(rp.history) == rp.size
     rep = pattern.analyze(rp.history)
     assert rep.errors == []
@@ -254,42 +230,3 @@ def test_break_marker(gen):
     assert rep.errors == []
     assert rep.markers_matching(b"BREAK")
     assert rep.seqs[-1] == gen.last_seq
-
-
-@pytest.mark.skipif(not HOOKS, reason="firmware test hooks not enabled (PICOLOG_TEST_HOOKS=1)")
-@pytest.mark.parametrize(
-    "command,reason",
-    [("picolog:reboot", "watchdog-forced"), ("picolog:hang", "watchdog"), ("picolog:sysreset", "soft")],
-)
-def test_history_survives_reset(gen, command, reason):
-    before = read_replay().resets
-    first = gen.next_seq
-    send_recorded(gen, 500)
-    with serial.Serial(LIVE, timeout=0.1) as s:
-        s.write(command.encode() + b"\n")
-        s.flush()
-        time.sleep(0.2)
-    wait_for_reenumeration(REPLAY)
-
-    rp = read_replay()
-    assert rp.resets == before + 1
-    ours = from_seq(rp.history, first)
-    boot = b"[picolog: boot, reset reason %s, history kept]" % reason.encode()
-    assert boot in ours
-    pre_reset = ours[: ours.index(boot)]
-    rep = pattern.analyze(pre_reset, strict=False)
-    assert rep.errors == []
-    assert rep.seqs[0] == first and rep.seqs[-1] == gen.last_seq
-
-
-@pytest.mark.skipif(not INTERACTIVE, reason="needs a human (PICOLOG_INTERACTIVE=1, run with -s)")
-def test_power_cycle_clears_history(gen):
-    send_recorded(gen, 100)
-    input("\nUnplug the Pico's USB (removing all power), wait 5 s, plug it back in, then press Enter...")
-    wait_for_device(REPLAY)
-    rp = read_replay()
-    assert rp.resets == 0
-    rep = pattern.analyze(rp.history, strict=False)
-    assert rep.seqs == []
-    assert rep.markers_matching(b"boot, reset reason por")
-    assert rep.markers_matching(b"history cleared")

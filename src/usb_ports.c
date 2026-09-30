@@ -42,10 +42,9 @@ static void start_replay(usb_port_t *p, const history_t *h, uint64_t uptime_us) 
     p->state = USB_PORT_REPLAY;
 
     uint64_t s = uptime_us / 1000000u;
-    set_msg(p, "=== picolog replay: %llu bytes, uptime %llud %02u:%02u:%02u, resets since power-on %lu ===\r\n",
+    set_msg(p, "=== picolog replay: %llu bytes, uptime %llud %02u:%02u:%02u ===\r\n",
             (unsigned long long)(p->replay_end - p->cursor), (unsigned long long)(s / 86400u),
-            (unsigned)(s / 3600u % 24u), (unsigned)(s / 60u % 60u), (unsigned)(s % 60u),
-            (unsigned long)history_reset_count(h));
+            (unsigned)(s / 3600u % 24u), (unsigned)(s / 60u % 60u), (unsigned)(s % 60u));
 }
 
 void usb_port_task(usb_port_t *p, const usb_port_io_t *io, const history_t *h, uint64_t uptime_us) {

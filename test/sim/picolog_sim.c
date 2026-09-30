@@ -8,7 +8,7 @@
 // A port counts as "DTR asserted" while some process has its pty open
 // (Linux reports POLLHUP on the master while no slave fd is open).
 // Used to exercise test/hw/test_integration.py without hardware; it does not
-// model DMA, UART errors or resets. UART input is paced to the given baud
+// model DMA or UART errors. UART input is paced to the given baud
 // rate (8N1, 10 bits per byte) like the real line.
 //
 //   ./picolog_sim /tmp/picolog-sim [baud] [history_size]
@@ -88,8 +88,8 @@ int main(int argc, char **argv) {
     }
     double bytes_per_us = (argc > 2 ? strtod(argv[2], NULL) : 115200.0) / 10.0 / 1e6;
     uint32_t size = argc > 3 ? (uint32_t)strtoul(argv[3], NULL, 0) : 256u * 1024u;
-    if (size < 2 * HISTORY_COMMIT_CHUNK || (size & (size - 1))) {
-        fprintf(stderr, "history size must be a power of two >= %u\n", 2 * HISTORY_COMMIT_CHUNK);
+    if (size == 0 || (size & (size - 1))) {
+        fprintf(stderr, "history size must be a power of two\n");
         return 2;
     }
     signal(SIGPIPE, SIG_IGN);
@@ -106,11 +106,9 @@ int main(int argc, char **argv) {
     int uart_keep = open(ptsname(uart), O_RDWR | O_NOCTTY);
     (void)uart_keep;
 
-    static history_hdr_t hdr[2];
     uint8_t *buf = malloc(size);
     history_t h;
-    history_boot(&h, hdr, buf, size);
-    history_appendf(&h, "\r\n[picolog: boot, reset reason sim, history cleared]\r\n");
+    history_init(&h, buf, size);
 
     usb_port_t live, replay;
     usb_port_init(&live, 0, false);

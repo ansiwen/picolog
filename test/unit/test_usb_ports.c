@@ -72,13 +72,9 @@ static void reset_fakes(void) {
 
 // ---- history ----
 
-static history_hdr_t hdr[2];
 static uint8_t buf[SIZE];
 
-static void fresh(history_t *h) {
-    memset(hdr, 0, sizeof(hdr));
-    history_boot(h, hdr, buf, SIZE);
-}
+static void fresh(history_t *h) { history_init(h, buf, SIZE); }
 
 // Deterministic printable "log" text with sequence numbers.
 static uint64_t line_no;
@@ -196,10 +192,10 @@ static void test_replay_then_live_no_gap_no_dup(void) {
     CHECK(p.cursor == history_head(&h));
 
     fake_port_t *f = &fake[1];
-    // Header comes first, with the byte count and uptime/reset count.
+    // Header comes first, with the byte count and uptime.
     char want_hdr[160];
     snprintf(want_hdr, sizeof(want_hdr),
-             "=== picolog replay: %llu bytes, uptime 1d 01:01:01, resets since power-on 0 ===\r\n",
+             "=== picolog replay: %llu bytes, uptime 1d 01:01:01 ===\r\n",
              (unsigned long long)(p.replay_end - oldest));
     CHECK(cut(f, want_hdr) == 0);
     long end_pos = cut(f, "\r\n=== picolog replay end, live follows ===\r\n");
@@ -326,7 +322,7 @@ static void test_drop_during_replay(void) {
     CHECK(p.cursor == history_head(&h));
     // The header must still be complete (it is not subject to drops).
     CHECK(strncmp(fake[1].out, "=== picolog replay: ", 20) == 0);
-    CHECK(strstr(fake[1].out, "resets since power-on 0 ===\r\n") != NULL);
+    CHECK(strstr(fake[1].out, "uptime 1d 01:01:01 ===\r\n") != NULL);
 }
 
 static void test_ports_independent(void) {

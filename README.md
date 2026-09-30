@@ -17,9 +17,8 @@ host tool:
 | replay | `/dev/picolog-replay` (`ttyACM1`, interface 02) | Sends a header, the **whole history**, an end marker, then continues live. |
 
 Reading never consumes the history: every open of the replay port replays
-everything again. The history survives a reset of the Pico (watchdog, soft
-reset, RUN pin), but not a power loss. It lives in RAM only and is never
-written to flash.
+everything again. The history lives in RAM only and is never written to
+flash: any reset or power loss of the Pico clears it.
 
 ## Wiring
 
@@ -36,7 +35,11 @@ target GND ───────────►  GND  (e.g. Pico 2 pin 3)
 - GP1 has the internal pull-up enabled, so an unplugged target reads as an
   idle line rather than garbage.
 - Power the Pico from the host's USB, or from any USB supply if you only
-  want recording. The history is lost if the Pico loses power.
+  want recording. The history is lost if the Pico loses power, so don't
+  move its USB cable from the hub to a laptop to fetch the logs. Either plug
+  the laptop into the same hub/supply path, or power the Pico separately
+  through VSYS (see the Pico 2 datasheet for the required diode) so the USB
+  cable can be swapped.
 
 ## Building
 
@@ -64,8 +67,6 @@ Build options (`cmake -S . -B build -DNAME=value`):
 | `PICOLOG_UART_STOP_BITS` | `1` | 1 or 2 |
 | `PICOLOG_UART_RX_PIN` | `1` | Must be a UART0 RX-capable pin (1, 13, 17, 29, …) |
 | `PICOLOG_USB_VID` / `PICOLOG_USB_PID` | `0x1209` / `0x0001` | pid.codes **test** VID/PID. Use your own for anything beyond development, and update the udev rule to match. |
-| `PICOLOG_WATCHDOG_MS` | `2000` | Watchdog timeout |
-| `PICOLOG_TEST_HOOKS` | `OFF` | Test-only reset commands, see [Testing](#testing). Leave off in production. |
 
 The firmware is built with `-Wall -Wextra -Werror`.
 
@@ -141,23 +142,20 @@ On Windows: open the "picolog replay" COM port in PuTTY (connection type
 A replay looks like this:
 
 ```
-=== picolog replay: 262144 bytes, uptime 3d 04:12:55, resets since power-on 1 ===
+=== picolog replay: 262144 bytes, uptime 3d 04:12:55 ===
 ...history, oldest first...
-[picolog: boot, reset reason watchdog, history kept]
-...more history...
 === picolog replay end, live follows ===
 ...live data...
 ```
 
-- *uptime* is the Pico's time since its last boot.
-- *resets since power-on* counts Pico resets during which the history was kept.
+*uptime* is the Pico's time since it started, i.e. how far back the
+history could at most reach.
 
 picolog inserts in-band markers into the recorded data. Each marker is on
 its own line, and a marker may split a target line in two:
 
 | Marker | Meaning |
 |---|---|
-| `[picolog: boot, reset reason R, history kept\|cleared]` | The Pico (re)started. `R` is `por` (power-on), `brownout`, `run-pin`, `watchdog` (timeout), `watchdog-forced` (`watchdog_reboot()`; probably also seen after flashing, when the bootrom reboots into the new image), `soft` (Arm SYSRESETREQ / debugger warm reset), `debugger`, `rescue`, `glitch`, `powerdown` or `unknown`. |
 | `[picolog: BREAK]` | The target held its TX line low for longer than a character, typically when the target resets, crashes or powers down. |
 | `[picolog: framing error]`, `[picolog: parity error]` | Line errors. Many of them usually mean a wrong baud rate or format. Repeated errors are aggregated (`x N`) and emitted at most every 100 ms. |
 | `[picolog: UART FIFO overrun]` | The Pico's UART receive FIFO overflowed. This should never happen. |
@@ -176,7 +174,7 @@ recorded:
 target TX ──► UART0 RX FIFO ──DMA (ring mode)──► stage-1 ring (32 KiB, aligned)
                                                       │  main loop copies
                                                       ▼
-                                     history ring (256 KiB, __uninitialized_ram)
+                                     history ring (256 KiB)
                                          ▲                     ▲
                               live cursor (port 1)   replay cursor (port 2)
 ```
@@ -195,16 +193,6 @@ target TX ──► UART0 RX FIFO ──DMA (ring mode)──► stage-1 ring (3
   snapshot (oldest byte, end, header) is taken when sending actually starts.
   The header and the first ~900 history bytes go into the TX FIFO at once, so
   a replay taken while data is flowing doesn't lose its oldest bytes.
-- **Persistence:** the history and its header live in `__uninitialized_ram`,
-  which crt0 does not zero. The header (magic, version, size, reset
-  counter, sequence number, head offset, CRC32) is kept in two copies that
-  are written alternately. A reset in the middle of a header update
-  therefore always leaves one valid copy. The header is committed at least
-  every 512 bytes. After a reset, the oldest 512 bytes of the ring are
-  excluded because an interrupted append may have overwritten them. On boot,
-  a valid header means "continue appending", and anything else means
-  "start empty".
-- **Watchdog:** 2 s, fed by the main loop.
 
 ### Notes on hardware facts (checked against the RP2350 datasheet and pico-sdk 2.3.1)
 
@@ -215,24 +203,11 @@ target TX ──► UART0 RX FIFO ──DMA (ring mode)──► stage-1 ring (3
   re-triggers itself forever, continuing at its current write address, and
   the live count still tells how many bytes arrived. Bytes between two polls
   = `(prev − now) mod 2^27`. That is unambiguous because polls are far less
-  than 2^27 bytes apart (the watchdog enforces < 2 s).
+  than 2^27 bytes apart (over 90 s even at 12 Mbaud; the superloop never
+  blocks).
 - **UART `DMAONERR`** is kept clear. If set, the UART masks the RX DMA
   request while an error interrupt is pending, and capture would stall on
   the first framing error.
-- **Bootrom vs. SRAM contents:** according to the datasheet, the bootrom uses
-  its dedicated 1 KiB boot RAM for its stack and state, and the top of USB
-  RAM as a search workspace. Main SRAM is only cleared through an
-  image's LOAD_MAP. pico-sdk only emits a LOAD_MAP for
-  `PICO_CRT0_PIN_XIP_SRAM`, which picolog doesn't use. So a watchdog or
-  soft reset should keep the history. **This still needs confirming on real
-  hardware** with the reset tests below. If the header check fails after a
-  reset, the boot marker says `history cleared` after a non-`por` reset.
-- **Reset reason:** `POWMAN CHIP_RESET.HAD_*` only records *chip-level*
-  resets and is not updated by an Arm SYSRESETREQ, which is a warm reset of
-  the cores. `WATCHDOG_REASON` is cleared by both. picolog keeps a magic
-  value in watchdog `SCRATCH0`. Scratch registers are cleared by chip-level
-  resets and kept over system resets, which tells whether `CHIP_RESET` is
-  current or left over from an earlier reset.
 - **RP2350-E9** (A2 stepping: extra leakage on inputs holds a floating
   pad near 2.2 V, and the internal pull-*down* cannot overcome it): the
   datasheet says the pull-*up* still works and removes the condition.
@@ -241,8 +216,9 @@ target TX ──► UART0 RX FIFO ──DMA (ring mode)──► stage-1 ring (3
 
 ### Limitations
 
-- Bytes that are in the stage-1 buffer but not yet copied (normally
-  microseconds' worth) are lost if the *Pico* itself resets.
+- Any reset or power loss of the Pico clears the history. There is no
+  watchdog: if the Pico firmware hangs, it stays hung (the history is not
+  sent anymore, but it is also not wiped) until someone resets it.
 - Line-error markers are placed where the main loop noticed the error. That
   can be a few characters after the character in error.
 - If a port stays open, the live data after the replay is subject to the same
@@ -258,9 +234,8 @@ make -C test/unit
 ```
 
 This builds `history.c` and `usb_ports.c` natively with ASan/UBSan and tests
-wraparound, 64-bit offsets (across 2^32), dropped-byte detection, header
-CRC/version/size validation, A/B header recovery after an interrupted commit,
-the replay-to-live seam (no gap or duplicate), slow readers, and both ports
+wraparound, 64-bit offsets (across 2^32), dropped-byte detection, the
+replay-to-live seam (no gap or duplicate), slow readers, and both ports
 at once. The Python pattern checker has its own tests:
 
 ```sh
@@ -272,7 +247,7 @@ cd test/hw && python3 -m pytest test_pattern.py
 `test/sim/picolog_sim` runs the real ring and port logic on Linux with
 pseudo-terminals in place of UART and USB. You can point the hardware test
 suite at it to check the test code and the port logic end to end. It
-doesn't model DMA, BREAK or resets.
+doesn't model DMA or BREAK.
 
 ```sh
 make -C test/sim
@@ -301,8 +276,6 @@ PICOLOG_ADAPTER=/dev/ttyUSB0 python3 -m pytest -v test_integration.py
 | `test_both_ports_independently` | Both ports open at once. |
 | `test_slow_live_reader_gets_dropped_marker` | A live reader that stops reading gets a dropped marker, and the firmware doesn't stall. |
 | `test_break_marker` | A BREAK from the adapter shows up as a marker. |
-| `test_history_survives_reset` | *Needs a `-DPICOLOG_TEST_HOOKS=ON` build and `PICOLOG_TEST_HOOKS=1`.* Sends `picolog:reboot` / `picolog:hang` / `picolog:sysreset` to the live port. Checks that the history is preserved, the boot marker names the right reason (`watchdog-forced` / `watchdog` / `soft`), and the reset counter went up. |
-| `test_power_cycle_clears_history` | *Interactive (`PICOLOG_INTERACTIVE=1 pytest -s`).* After unplugging, the history is empty with reason `por`. |
 
 For the 1 Mbaud stress test, build with `-DPICOLOG_UART_BAUD=1000000` and run
 with `PICOLOG_BAUD=1000000` (the adapter must support that rate). The test
@@ -324,14 +297,15 @@ lines carry sequence numbers and a CRC32. The generator also works on its own:
 
 ```
 CMakeLists.txt, pico_sdk_import.cmake
-src/main.c            superloop, init, watchdog, reset reason, markers
+src/main.c            superloop, init, markers
 src/capture.c/.h      UART + DMA stage 1, error IRQ
-src/history.c/.h      stage-2 ring, 64-bit offsets, persistent A/B header + CRC (hardware-independent)
+src/history.c/.h      stage-2 ring, 64-bit offsets (hardware-independent)
 src/usb_ports.c/.h    per-port cursor logic, DTR handling, replay state machine (hardware-independent)
 src/usb_descriptors.c, src/tusb_config.h
 udev/99-picolog.rules
 test/unit/            C unit tests (host)
 test/sim/             host simulator (ptys)
 test/hw/              pattern generator + pytest integration tests (pyserial)
-PLAN.md               original design plan
+PLAN.md               original design plan (its watchdog and reset
+                      persistence were deliberately left out)
 ```

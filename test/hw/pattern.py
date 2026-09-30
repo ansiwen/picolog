@@ -20,10 +20,7 @@ _ALPHABET = (string.ascii_letters + string.digits).encode()
 
 LINE_RE = re.compile(rb"^PL(\d{8}) ([0-9A-Za-z]{%d}) ([0-9a-f]{8})$" % PAYLOAD_LEN)
 MARKER_RE = re.compile(rb"^\[picolog: (.*)\]$")
-HEADER_RE = re.compile(
-    rb"^=== picolog replay: (\d+) bytes, uptime (\d+)d (\d\d):(\d\d):(\d\d), "
-    rb"resets since power-on (\d+) ===$"
-)
+HEADER_RE = re.compile(rb"^=== picolog replay: (\d+) bytes, uptime (\d+)d (\d\d):(\d\d):(\d\d) ===$")
 END_TEXT = b"=== picolog replay end, live follows ==="
 END_MARKER = b"\r\n" + END_TEXT + b"\r\n"
 
@@ -94,7 +91,7 @@ def parse(data: bytes) -> list[Item]:
 
 
 # Markers after which a sequence gap is expected.
-GAP_MARKERS = (b"bytes dropped", b"capture overrun", b"boot,")
+GAP_MARKERS = (b"bytes dropped", b"capture overrun")
 
 
 def analyze(data: bytes, strict: bool = True) -> Report:
@@ -104,7 +101,7 @@ def analyze(data: bytes, strict: bool = True) -> Report:
     strict=True, any other non-line content is an error. With strict=False,
     picolog markers are allowed; a marker can split a line in two, so one
     missing sequence number is accepted if a fragment ("other") shows up in
-    between, and larger gaps are accepted after dropped/overrun/boot markers.
+    between, and larger gaps are accepted after dropped/overrun markers.
     """
     items = parse(data)
     rep = Report(items)
@@ -152,10 +149,6 @@ class Replay:
     @property
     def size(self) -> int:
         return int(self.header.group(1))
-
-    @property
-    def resets(self) -> int:
-        return int(self.header.group(6))
 
 
 def split_replay(data: bytes) -> Replay:

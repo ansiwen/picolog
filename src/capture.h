@@ -13,7 +13,7 @@
 // live TRANS_COUNT keeps decrementing and wraps every CAPTURE_DMA_COUNT
 // bytes. Bytes produced between two polls = (prev - now) mod COUNT, which is
 // unambiguous as long as polls are less than COUNT bytes apart (2^27 bytes is
-// >90 s even at 12 Mbaud; the 2 s watchdog guarantees far more frequent polls).
+// >90 s even at 12 Mbaud; the superloop never blocks and polls continuously).
 #define CAPTURE_DMA_COUNT_BITS 27u
 #define CAPTURE_DMA_COUNT (1u << CAPTURE_DMA_COUNT_BITS)
 
