@@ -327,6 +327,26 @@ PICOLOG_ADAPTER=/dev/ttyUSB0 pytest -v -k unplugged
    `udevadm info /dev/picolog-replay | grep ID_MM_DEVICE_IGNORE` shows `1`, and `mmcli -L` does not
    list the device.
 
+### 3.3 V UART source (second Pico)
+
+`test/uart_source/` is a tiny stand-alone firmware for a second Pico or Pico 2. It sends the time
+since boot on UART0 TX every 100 ms, so you can test picolog without a USB-serial adapter:
+
+```
+[     12.300]
+[     12.400]
+```
+
+```sh
+cmake -S test/uart_source -B build-uart-source      # -DPICO_BOARD=pico for an RP2040 Pico
+cmake --build build-uart-source                     # -> build-uart-source/uart_source.uf2
+```
+
+Wire source GP0 (pin 1, TX) to picolog GP1 (pin 2, RX) and connect the grounds; both are 3.3 V.
+Options: `SOURCE_UART_BAUD` (must match `PICOLOG_UART_BAUD`), `SOURCE_UART_TX_PIN`,
+`SOURCE_UART_DATA_BITS`, `SOURCE_UART_STOP_BITS`, `SOURCE_UART_PARITY`, `SOURCE_PERIOD_MS`.
+Flash it like picolog (BOOTSEL, copy the `.uf2`).
+
 ## Project layout
 
 ```
@@ -341,5 +361,6 @@ udev/99-picolog.rules
 test/unit/            C unit tests (host)
 test/sim/             host simulator on ptys
 test/hw/              pattern generator + pytest tests
+test/uart_source/     firmware for a second Pico that sends a timestamp every 100 ms (see below)
 PLAN.md               the design decisions this implementation follows
 ```
