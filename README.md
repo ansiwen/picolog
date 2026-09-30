@@ -335,6 +335,5 @@ udev/99-picolog.rules
 test/unit/            C unit tests (host)
 test/sim/             host simulator (ptys)
 test/hw/              pattern generator + pytest integration tests (pyserial)
-PLAN.md               original design plan (its watchdog and reset
-                      persistence were deliberately left out)
+PLAN.md               design plan describing this implementation
 ```
