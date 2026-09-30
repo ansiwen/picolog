@@ -329,9 +329,9 @@ PICOLOG_ADAPTER=/dev/ttyUSB0 pytest -v -k unplugged
 
 ## Test UART source (second Pico)
 
-`test/uart_source` is a separate, tiny firmware for a second Pico that stands in for the target:
-it sends the time since boot on UART0 TX (115200 8N1, 3.3 V) every 100 ms, e.g.
-`[    12.300] t=12300 ms` followed by CR LF. It needs no USB host, just power.
+`test/uart_source` is a separate, tiny firmware for a second Pico or Pico 2 that stands in for the
+target: it sends the time since boot on UART0 TX (3.3 V) every 100 ms, e.g.
+`[     12.300] t=12300 ms` followed by CR LF. It needs no USB host, just power.
 
 ```sh
 cmake -S test/uart_source -B build-uart-source    # add -DPICO_BOARD=pico for an RP2040 Pico
@@ -345,9 +345,10 @@ Flash it with BOOTSEL like picolog, then wire the two boards:
 | GP0 (pin 1), UART0 TX | GP1 (pin 2), UART0 RX |
 | GND | GND |
 
-Power the source Pico from its own USB. Options (`-DNAME=value`): `UART_SOURCE_BAUD` (115200),
-`UART_SOURCE_TX_PIN` (0, 12 or 16), `UART_SOURCE_PERIOD_MS` (100). If you change the baud rate,
-build picolog with the same `PICOLOG_UART_BAUD`.
+Power the source Pico from its own USB. Options (`-DNAME=value`): `SOURCE_UART_BAUD` (115200),
+`SOURCE_UART_TX_PIN` (0; a UART0 TX pin of the chosen board, anything else is rejected),
+`SOURCE_UART_DATA_BITS` (8), `SOURCE_UART_STOP_BITS` (1), `SOURCE_UART_PARITY` (`NONE`),
+`SOURCE_PERIOD_MS` (100). The UART format must match picolog's `PICOLOG_UART_*` options.
 
 ## Project layout
 
