@@ -65,7 +65,6 @@ void usb_port_task(usb_port_t *p, const usb_port_io_t *io, const history_t *h, u
         start_replay(p, h, uptime_us);
     }
 
-    bool wrote = false;
     for (;;) {
         uint32_t avail = io->write_available(p->itf);
         if (avail == 0) {
@@ -79,7 +78,6 @@ void usb_port_task(usb_port_t *p, const usb_port_io_t *io, const history_t *h, u
                 break;
             }
             p->msg_pos = (uint16_t)(p->msg_pos + n);
-            wrote = true;
             continue;
         }
 
@@ -113,10 +111,11 @@ void usb_port_task(usb_port_t *p, const usb_port_io_t *io, const history_t *h, u
             break;
         }
         p->cursor += w;
-        wrote = true;
     }
 
-    if (wrote) {
-        io->flush(p->itf);
-    }
+    // Flush unconditionally, not only after a write: if the FIFO filled up
+    // while the host was not accepting data (e.g. USB suspend, when TinyUSB
+    // does not transmit), nothing new can be written, and without this call
+    // the queued data would never be sent after the host comes back.
+    io->flush(p->itf);
 }

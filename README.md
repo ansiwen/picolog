@@ -8,6 +8,10 @@ It gives you two things:
   whether or not a host is connected. After a target crash you plug in a
   laptop and fetch the history.
 
+The Pico is meant to run from its **own power supply** (see [Power](#power)),
+so USB can be plugged, unplugged and moved between hosts at any time without
+losing the history or any target output.
+
 The Pico shows up as a USB device with two serial ports and needs no custom
 host tool:
 
@@ -25,6 +29,8 @@ flash: any reset or power loss of the Pico clears it.
 ```
 target TX  ───────────►  GP1  (Pico 2 pin 2, UART0 RX)
 target GND ───────────►  GND  (e.g. Pico 2 pin 3)
+supply +   ──►|────────►  VSYS (Pico 2 pin 39)   (Schottky diode, see Power)
+supply −   ───────────►  GND  (e.g. Pico 2 pin 38)
 ```
 
 - The Pico's inputs are **3.3 V logic**. A 5 V TTL target needs a level
@@ -34,12 +40,33 @@ target GND ───────────►  GND  (e.g. Pico 2 pin 3)
 - GP0 (UART0 TX) is left unconfigured; picolog never transmits to the target.
 - GP1 has the internal pull-up enabled, so an unplugged target reads as an
   idle line rather than garbage.
-- Power the Pico from the host's USB, or from any USB supply if you only
-  want recording. The history is lost if the Pico loses power, so don't
-  move its USB cable from the hub to a laptop to fetch the logs. Either plug
-  the laptop into the same hub/supply path, or power the Pico separately
-  through VSYS (see the Pico 2 datasheet for the required diode) so the USB
-  cable can be swapped.
+
+## Power
+
+The history lives in RAM, so the Pico must never lose power. Feed it from a
+separate supply, not only through the USB connector:
+
+- Connect a fixed supply of about **2.3 V to 5.5 V** to **VSYS (pin 39)**
+  through a **Schottky diode**, and its ground to any GND pin. This is the
+  method the Pico 2 datasheet recommends for a second supply ("power ORing"):
+  the on-board diode D1 (VBUS → VSYS) and your diode let whichever supply is
+  higher power the board, and neither can back-power the other. In
+  particular, the external supply can't push current into the laptop's USB
+  port, and USB can come and go without the Pico noticing a power change.
+- Don't connect the external supply to VBUS (pin 40) or to 3V3.
+- The datasheet also describes a P-FET variant with less voltage drop. Note
+  that it switches the external supply *off* while VBUS is present, which
+  makes the handover depend on the P-FET switching quickly. The plain diode
+  variant keeps the external supply connected at all times and is the
+  simpler choice here.
+
+With this, USB unplug/replug is a normal event. Unplugging looks like a USB
+suspend to the Pico (TinyUSB on the RP2350 cannot see VBUS), and recording
+simply continues. Replugging makes the host reset and re-enumerate the
+device, and every port open starts a fresh session. If a host goes to sleep
+with a terminal still open, the session is kept: after wake-up the terminal
+continues where it stopped, with a `bytes dropped` marker if the ring
+wrapped in the meantime.
 
 ## Building
 
@@ -216,8 +243,8 @@ target TX ──► UART0 RX FIFO ──DMA (ring mode)──► stage-1 ring (3
 
 ### Limitations
 
-- Any reset or power loss of the Pico clears the history. There is no
-  watchdog: if the Pico firmware hangs, it stays hung (the history is not
+- Any reset or power loss of the Pico clears the history (hence the
+  separate supply). There is no watchdog: if the Pico firmware hangs, it stays hung (the history is not
   sent anymore, but it is also not wiped) until someone resets it.
 - Line-error markers are placed where the main loop noticed the error. That
   can be a few characters after the character in error.
@@ -259,7 +286,8 @@ cd test/hw && PICOLOG_SIM=1 PICOLOG_ADAPTER=/tmp/psim/uart PICOLOG_LIVE=/tmp/psi
 ### Hardware integration tests
 
 Setup: a USB-serial adapter (3.3 V) plays the target. Connect its TX to GP1
-and GND to GND, and plug both into the test machine. Install the udev rule.
+and GND to GND, and plug both into the test machine. Power the Pico from its
+own supply as in production (see [Power](#power)). Install the udev rule.
 
 ```sh
 pip install -r test/hw/requirements.txt
@@ -276,6 +304,7 @@ PICOLOG_ADAPTER=/dev/ttyUSB0 python3 -m pytest -v test_integration.py
 | `test_both_ports_independently` | Both ports open at once. |
 | `test_slow_live_reader_gets_dropped_marker` | A live reader that stops reading gets a dropped marker, and the firmware doesn't stall. |
 | `test_break_marker` | A BREAK from the adapter shows up as a marker. |
+| `test_recording_continues_while_usb_unplugged` | Target data sent while the Pico's USB is unplugged (Pico on its own supply) is in the replay after replugging, with no gap, and the live port works again. Needs `PICOLOG_UNPLUG_CMD`/`PICOLOG_PLUG_CMD` (e.g. `uhubctl -l 1-1 -p 2 -a off` / `-a on` on a hub with per-port power switching) or `PICOLOG_INTERACTIVE=1 pytest -s` to do it by hand. |
 
 For the 1 Mbaud stress test, build with `-DPICOLOG_UART_BAUD=1000000` and run
 with `PICOLOG_BAUD=1000000` (the adapter must support that rate). The test

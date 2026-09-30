@@ -23,7 +23,16 @@ static history_t history;
 static usb_port_t port_live;
 static usb_port_t port_replay;
 
-static bool io_connected(uint8_t itf) { return tud_cdc_n_connected(itf); }
+// "Connected" = configured by a host and DTR asserted. Unlike
+// tud_cdc_n_connected() this deliberately ignores USB suspend: the RP2350
+// TinyUSB port forces VBUS detect on, so an unplugged cable looks like a
+// suspend, and a host going to sleep with the terminal still open suspends
+// the bus too. Keeping the session across a suspend means a resumed terminal
+// simply continues (with a "dropped" marker if needed) instead of getting a
+// second replay. A real replug always starts a new session because the
+// host's bus reset clears the configuration and DTR (usbd_reset/cdcd_reset).
+// While suspended TinyUSB does not transmit, so the TX FIFO just fills up.
+static bool io_connected(uint8_t itf) { return tud_mounted() && (tud_cdc_n_get_line_state(itf) & 0x1u); }
 static uint32_t io_write_available(uint8_t itf) { return tud_cdc_n_write_available(itf); }
 static uint32_t io_write(uint8_t itf, const void *buf, uint32_t len) { return tud_cdc_n_write(itf, buf, len); }
 static void io_flush(uint8_t itf) { tud_cdc_n_write_flush(itf); }

@@ -355,6 +355,30 @@ static void test_ports_independent(void) {
     CHECK(fake[1].out[fake[1].out_len - 1] == 'Z');
 }
 
+// Host stops accepting data (e.g. USB suspend) with the TX FIFO full: the
+// port must keep calling flush, otherwise nothing would ever push the queued
+// data out after the host comes back.
+static void test_flush_while_blocked(void) {
+    reset_fakes();
+    history_t h;
+    fresh(&h);
+    usb_port_t p;
+    usb_port_init(&p, 0, false);
+    fake[0].connected = true;
+    task(&p, &h);  // open
+    fake[0].avail_per_task = 0;
+    history_append(&h, "data", 4);
+    int before = fake[0].flush_calls;
+    task(&p, &h);
+    task(&p, &h);
+    CHECK(fake[0].flush_calls == before + 2);
+    CHECK(fake[0].out_len == 0);
+
+    fake[0].avail_per_task = 1u << 30;  // host is back
+    task(&p, &h);
+    CHECK(fake[0].out_len == 4 && memcmp(fake[0].out, "data", 4) == 0);
+}
+
 int main(void) {
     test_live_shows_only_new_data();
     test_replay_then_live_no_gap_no_dup();
@@ -363,6 +387,7 @@ int main(void) {
     test_slow_live_reader_drops();
     test_drop_during_replay();
     test_ports_independent();
+    test_flush_while_blocked();
     if (failures) {
         fprintf(stderr, "test_usb_ports: %d failure(s)\n", failures);
         return 1;

@@ -12,6 +12,11 @@ Environment:
   PICOLOG_BAUD         must match the firmware's PICOLOG_UART_BAUD (default 115200)
   PICOLOG_HISTORY      history size in bytes (default 262144)
   PICOLOG_SIM=1        running against test/sim/picolog_sim (skips BREAK, which it cannot model)
+  PICOLOG_UNPLUG_CMD / PICOLOG_PLUG_CMD
+                       shell commands that cut / restore the Pico's USB connection,
+                       e.g. `uhubctl -l 1-1 -p 2 -a off` / `... -a on` on a hub with
+                       per-port power switching (the Pico must have its own supply)
+  PICOLOG_INTERACTIVE=1 unplug/replug by hand instead (run with `pytest -s`)
 
 Run:  cd test/hw && PICOLOG_ADAPTER=/dev/ttyUSB0 pytest -v test_integration.py
 """
@@ -20,6 +25,7 @@ from __future__ import annotations
 
 import os
 import random
+import subprocess
 import threading
 import time
 
@@ -35,6 +41,9 @@ REPLAY = os.environ.get("PICOLOG_REPLAY", "/dev/picolog-replay")
 BAUD = int(os.environ.get("PICOLOG_BAUD", "115200"))
 HISTORY = int(os.environ.get("PICOLOG_HISTORY", str(256 * 1024)))
 SIM = os.environ.get("PICOLOG_SIM") == "1"
+UNPLUG_CMD = os.environ.get("PICOLOG_UNPLUG_CMD")
+PLUG_CMD = os.environ.get("PICOLOG_PLUG_CMD")
+INTERACTIVE = os.environ.get("PICOLOG_INTERACTIVE") == "1"
 
 BYTES_PER_SEC = BAUD / 10  # 8N1
 
@@ -46,6 +55,31 @@ pytestmark = pytest.mark.skipif(not ADAPTER, reason="PICOLOG_ADAPTER not set (no
 
 def secs_for(nbytes: int) -> float:
     return nbytes / BYTES_PER_SEC
+
+
+def wait_for_path(path: str, present: bool, timeout: float = 15.0) -> None:
+    deadline = time.monotonic() + timeout
+    while os.path.exists(path) != present:
+        if time.monotonic() > deadline:
+            raise TimeoutError(f"{path} did not {'appear' if present else 'disappear'}")
+        time.sleep(0.1)
+
+
+def usb_disconnect() -> None:
+    if UNPLUG_CMD:
+        subprocess.run(UNPLUG_CMD, shell=True, check=True)
+    else:
+        input("\nUnplug the Pico's USB cable (keep its own supply on), then press Enter...")
+    wait_for_path(REPLAY, present=False)
+
+
+def usb_reconnect() -> None:
+    if PLUG_CMD:
+        subprocess.run(PLUG_CMD, shell=True, check=True)
+    else:
+        input("\nPlug the Pico's USB cable back in, then press Enter...")
+    wait_for_path(REPLAY, present=True)
+    time.sleep(1)  # let udev finish (permissions, symlinks)
 
 
 class Reader:
@@ -230,3 +264,21 @@ def test_break_marker(gen):
     assert rep.errors == []
     assert rep.markers_matching(b"BREAK")
     assert rep.seqs[-1] == gen.last_seq
+
+
+@pytest.mark.skipif(
+    SIM or not ((UNPLUG_CMD and PLUG_CMD) or INTERACTIVE),
+    reason="needs PICOLOG_UNPLUG_CMD/PICOLOG_PLUG_CMD or PICOLOG_INTERACTIVE=1 (with pytest -s)",
+)
+def test_recording_continues_while_usb_unplugged(gen):
+    """The Pico has its own supply: unplugging USB must not lose anything."""
+    first = gen.next_seq
+    send_recorded(gen, 200)
+    usb_disconnect()
+    gen.send(500)  # target keeps talking while no host is attached
+    usb_reconnect()
+    send_recorded(gen, 200)  # also shows the live port works after replug
+    rp = read_replay()
+    rep = pattern.analyze(from_seq(rp.history, first))
+    assert rep.errors == []
+    assert rep.seqs[0] == first and rep.seqs[-1] == gen.last_seq
