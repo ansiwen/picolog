@@ -65,6 +65,7 @@ static const uint8_t desc_configuration[] = {
     TUD_CDC_DESCRIPTOR(ITF_NUM_REPLAY, STRID_REPLAY, EPNUM_REPLAY_NOTIF, 8, EPNUM_REPLAY_OUT,
                        EPNUM_REPLAY_IN, 64),
 };
+_Static_assert(sizeof desc_configuration == CONFIG_TOTAL_LEN, "configuration descriptor length");
 
 uint8_t const *tud_descriptor_device_cb(void) {
     return (uint8_t const *)&desc_device;

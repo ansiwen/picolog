@@ -12,7 +12,8 @@ pico_sdk_init()
 set(PICOLOG_USB_VID 0x1209 CACHE STRING "USB vendor ID (default: pid.codes)")
 set(PICOLOG_USB_PID 0x0001 CACHE STRING "USB product ID (default: pid.codes test PID)")
 set(PICOLOG_UART_BAUD 115200 CACHE STRING "Baud rate of the captured UART")
-set(PICOLOG_UART_RX_PIN 1 CACHE STRING "GPIO used as UART0 RX (GP1 = pin 2)")
+set(PICOLOG_UART_RX_PIN 1 CACHE STRING "GPIO used as UART0 RX: 1, 3, 13, 15, 17 or 19 (GP1 = pin 2)")
+set_property(CACHE PICOLOG_UART_RX_PIN PROPERTY STRINGS 1 3 13 15 17 19)
 set(PICOLOG_UART_DATA_BITS 8 CACHE STRING "UART data bits (5-8)")
 set(PICOLOG_UART_STOP_BITS 1 CACHE STRING "UART stop bits (1 or 2)")
 set(PICOLOG_UART_PARITY NONE CACHE STRING "UART parity: NONE, EVEN or ODD")
@@ -21,6 +22,13 @@ set_property(CACHE PICOLOG_UART_PARITY PROPERTY STRINGS NONE EVEN ODD)
 string(TOUPPER "${PICOLOG_UART_PARITY}" PICOLOG_UART_PARITY_UC)
 if (NOT PICOLOG_UART_PARITY_UC MATCHES "^(NONE|EVEN|ODD)$")
     message(FATAL_ERROR "PICOLOG_UART_PARITY must be NONE, EVEN or ODD")
+endif ()
+
+# The capture code is hard-wired to UART0. These are the UART0 RX pins that the
+# Pico 2 brings out (3, 15 and 19 use the RP2350's UART_AUX function; GPIO29 is
+# UART0 RX-capable too but not on the header).
+if (NOT PICOLOG_UART_RX_PIN MATCHES "^(1|3|13|15|17|19)$")
+    message(FATAL_ERROR "PICOLOG_UART_RX_PIN must be a UART0 RX pin: 1, 3, 13, 15, 17 or 19")
 endif ()
 
 set(PICOLOG_SOURCES
