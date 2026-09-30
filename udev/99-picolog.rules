@@ -1,0 +1,24 @@
+# picolog UART recorder (USB 1209:0001 by default; edit the IDs below if you
+# changed PICOLOG_USB_VID / PICOLOG_USB_PID in the firmware build).
+#
+# - keeps ModemManager away (its AT probes are ignored by the firmware, but there
+#   is no reason to let it touch the ports at all)
+# - stable names by CDC interface number:
+#     /dev/picolog-live    (interface 00)   /dev/picolog/<serial>-live
+#     /dev/picolog-replay  (interface 02)   /dev/picolog/<serial>-replay
+#
+# Only positive ATTRS matches are used, and the ID pair is always matched in the
+# same rule so both attributes come from the same parent device.
+
+ACTION=="remove", GOTO="picolog_end"
+
+# The USB device itself and its interfaces
+SUBSYSTEM=="usb", ATTR{idVendor}=="1209", ATTR{idProduct}=="0001", ENV{ID_MM_DEVICE_IGNORE}="1"
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_interface", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="0001", ENV{ID_MM_DEVICE_IGNORE}="1"
+
+# The tty nodes
+SUBSYSTEM=="tty", KERNEL=="ttyACM*", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="0001", ENV{ID_MM_DEVICE_IGNORE}="1", ENV{ID_MM_PORT_IGNORE}="1", IMPORT{builtin}="usb_id"
+SUBSYSTEM=="tty", KERNEL=="ttyACM*", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="0001", ENV{ID_USB_INTERFACE_NUM}=="00", SYMLINK+="picolog-live", SYMLINK+="picolog/$env{ID_SERIAL_SHORT}-live"
+SUBSYSTEM=="tty", KERNEL=="ttyACM*", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="0001", ENV{ID_USB_INTERFACE_NUM}=="02", SYMLINK+="picolog-replay", SYMLINK+="picolog/$env{ID_SERIAL_SHORT}-replay"
+
+LABEL="picolog_end"
