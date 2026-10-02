@@ -13,6 +13,7 @@
 
 #include "capture.h"
 #include "history.h"
+#include "selftest_tx.h"
 #include "usb_ports.h"
 
 #define HISTORY_SIZE (256u * 1024u)
@@ -116,6 +117,7 @@ int main(void) {
     usb_port_init(&port_live, USB_PORT_KIND_LIVE, ITF_LIVE, &usb_ops, &history);
     usb_port_init(&port_replay, USB_PORT_KIND_REPLAY, ITF_REPLAY, &usb_ops, &history);
     tud_init(BOARD_TUD_RHPORT);
+    selftest_tx_start(); /* empty unless built with PICOLOG_SELFTEST_TX */
 
     for (;;) {
         tud_task();

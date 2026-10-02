@@ -2,7 +2,7 @@ CC ?= gcc
 CFLAGS = -std=c11 -g -O1 -Wall -Wextra -Werror -fsanitize=address,undefined \
          -fno-sanitize-recover=undefined -I../../src
 
-TESTS = test_history test_capture test_usb_ports
+TESTS = test_history test_capture test_usb_ports test_selftest_line
 
 # `make` builds and runs the tests; `make build` only builds them.
 all: check
@@ -19,10 +19,14 @@ test_usb_ports: test_usb_ports.c ../../src/usb_ports.c ../../src/usb_ports.h \
                 ../../src/history.c ../../src/history.h
 	$(CC) $(CFLAGS) -o $@ test_usb_ports.c ../../src/usb_ports.c ../../src/history.c
 
+test_selftest_line: test_selftest_line.c ../../src/selftest_line.c ../../src/selftest_line.h
+	$(CC) $(CFLAGS) -o $@ test_selftest_line.c ../../src/selftest_line.c
+
 check: build
 	./test_history
 	./test_capture
 	./test_usb_ports
+	./test_selftest_line
 
 clean:
 	rm -f $(TESTS)

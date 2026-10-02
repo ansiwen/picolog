@@ -64,6 +64,9 @@ This produces `build/picolog.uf2` (board `pico2`, platform `rp2350-arm-s`). Opti
 | `PICOLOG_UART_DATA_BITS` | `8` | 5-8 |
 | `PICOLOG_UART_STOP_BITS` | `1` | 1 or 2 |
 | `PICOLOG_UART_PARITY` | `NONE` | `NONE`, `EVEN` or `ODD` |
+| `PICOLOG_SELFTEST_TX` | `OFF` | `ON` adds a built-in test source on core 1, see [Built-in self-test](#built-in-self-test) |
+| `PICOLOG_SELFTEST_TX_PIN` | `4` | GPIO used as UART1 TX by the self-test: `4`, `6`, `8`, `10`, `20`, `22`, `24` or `26` |
+| `PICOLOG_SELFTEST_PERIOD_MS` | `100` | interval between self-test lines |
 | `PICOLOG_USB_VID` | `0x1209` | USB vendor ID (pid.codes) |
 | `PICOLOG_USB_PID` | `0x0001` | USB product ID (pid.codes test PID) |
 
@@ -350,6 +353,28 @@ Power the source Pico from its own USB. Options (`-DNAME=value`): `SOURCE_UART_B
 `SOURCE_UART_DATA_BITS` (8), `SOURCE_UART_STOP_BITS` (1), `SOURCE_UART_PARITY` (`NONE`),
 `SOURCE_PERIOD_MS` (100). The UART format must match picolog's `PICOLOG_UART_*` options.
 
+## Built-in self-test
+
+Without a second Pico, picolog can feed itself: configure with `-DPICOLOG_SELFTEST_TX=ON` and
+core 1 sends the same timestamp lines as the test source above (`[     12.300] t=12300 ms`) on
+UART1 TX every `PICOLOG_SELFTEST_PERIOD_MS`, in the UART format of the capture
+(`PICOLOG_UART_*`). Connect that pin to the capture input with one jumper:
+
+| From | To |
+|---|---|
+| GP4 (pin 6), UART1 TX | GP1 (pin 2), UART0 RX |
+
+Disconnect any real target from the RX pin first. Note that both UARTs share one clock and
+the format always matches, so this cannot find baud-rate or format mismatches; use the second
+Pico for that.
+
+With the option off (the default) none of this is compiled: no source file, definition or
+library is added, and the resulting `picolog.bin` is byte-identical to a build without the
+feature. When on, core 1 only runs a repeating timer with its own alarm pool, so its timer IRQ
+never lands on core 0; the remaining interaction is shared bus and flash-cache access (the
+timer callback runs from RAM). The period must exceed the time one line takes on the wire,
+otherwise lines are skipped.
+
 ## Project layout
 
 ```
@@ -359,6 +384,8 @@ src/capture.c/.h      UART + DMA stage 1, error IRQ
 src/history.c/.h      stage-2 ring, 64-bit offsets (hardware independent)
 src/usb_ports.c/.h    per-port cursor logic, DTR handling, replay state machine (hardware independent)
 src/usb_descriptors.c
+src/selftest_tx.c/.h  optional core-1 UART1 test source (PICOLOG_SELFTEST_TX), compiled out by default
+src/selftest_line.c/.h  its line formatter (hardware independent)
 src/tusb_config.h
 udev/99-picolog.rules
 test/unit/            C unit tests (host)

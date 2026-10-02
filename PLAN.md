@@ -29,7 +29,7 @@ Constraints:
 | Input | UART0, RX on GP1 (GP0/TX left unconfigured, never drives the target), default 115200 8N1, compile-time configurable |
 | USB | Composite device with **two CDC-ACM interfaces**, no custom host tool |
 | Storage | 256 KiB RAM ring buffer in ordinary `.bss`, starts empty on every boot |
-| Concurrency | Single-core superloop on core0 (DMA does the realtime work). Core1 unused. |
+| Concurrency | Single-core superloop on core0 (DMA does the realtime work). Core1 unused (except the optional `PICOLOG_SELFTEST_TX` test source, compiled out by default). |
 | Power | Separate supply into VSYS through a Schottky diode (see "Power") |
 
 ### Explicitly out of scope (considered and removed)

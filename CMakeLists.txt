@@ -18,6 +18,9 @@ set(PICOLOG_UART_DATA_BITS 8 CACHE STRING "UART data bits (5-8)")
 set(PICOLOG_UART_STOP_BITS 1 CACHE STRING "UART stop bits (1 or 2)")
 set(PICOLOG_UART_PARITY NONE CACHE STRING "UART parity: NONE, EVEN or ODD")
 set_property(CACHE PICOLOG_UART_PARITY PROPERTY STRINGS NONE EVEN ODD)
+option(PICOLOG_SELFTEST_TX "Core 1 sends timestamps on UART1 TX for a loopback test (off: no code at all)" OFF)
+set(PICOLOG_SELFTEST_TX_PIN 4 CACHE STRING "GPIO used as UART1 TX by the self-test: 4, 6, 8, 10, 20, 22, 24 or 26 (GP4 = pin 6)")
+set(PICOLOG_SELFTEST_PERIOD_MS 100 CACHE STRING "Interval between self-test lines in ms")
 
 string(TOUPPER "${PICOLOG_UART_PARITY}" PICOLOG_UART_PARITY_UC)
 if (NOT PICOLOG_UART_PARITY_UC MATCHES "^(NONE|EVEN|ODD)$")
@@ -39,6 +42,18 @@ set(PICOLOG_SOURCES
     src/usb_descriptors.c
 )
 
+# The self-test is compiled in only on request, so the default build is exactly
+# the firmware without it: no extra source, no definitions, no extra libraries.
+if (PICOLOG_SELFTEST_TX)
+    if (NOT PICOLOG_SELFTEST_TX_PIN MATCHES "^(4|6|8|10|20|22|24|26)$")
+        message(FATAL_ERROR "PICOLOG_SELFTEST_TX_PIN must be a UART1 TX pin: 4, 6, 8, 10, 20, 22, 24 or 26")
+    endif ()
+    if (NOT PICOLOG_SELFTEST_PERIOD_MS MATCHES "^[1-9][0-9]*$")
+        message(FATAL_ERROR "PICOLOG_SELFTEST_PERIOD_MS must be a positive integer")
+    endif ()
+    list(APPEND PICOLOG_SOURCES src/selftest_tx.c src/selftest_line.c)
+endif ()
+
 add_executable(picolog ${PICOLOG_SOURCES})
 
 target_include_directories(picolog PRIVATE src)
@@ -52,6 +67,15 @@ target_compile_definitions(picolog PRIVATE
     PICOLOG_UART_STOP_BITS=${PICOLOG_UART_STOP_BITS}
     PICOLOG_UART_PARITY=UART_PARITY_${PICOLOG_UART_PARITY_UC}
 )
+
+if (PICOLOG_SELFTEST_TX)
+    target_compile_definitions(picolog PRIVATE
+        PICOLOG_SELFTEST_TX
+        PICOLOG_SELFTEST_TX_PIN=${PICOLOG_SELFTEST_TX_PIN}
+        PICOLOG_SELFTEST_PERIOD_MS=${PICOLOG_SELFTEST_PERIOD_MS}
+    )
+    target_link_libraries(picolog PRIVATE pico_multicore)
+endif ()
 
 # -Werror only on our own sources: SDK sources are compiled into this target too.
 set_source_files_properties(${PICOLOG_SOURCES} PROPERTIES
